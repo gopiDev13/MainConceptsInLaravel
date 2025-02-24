@@ -1,0 +1,140 @@
+CRON JOBS : 
+-----------
+
+Explaination :
+---------------
+
+ A cron job in Laravel is a scheduled task that runs automatically at specified intervals.
+Laravel provides a built-in Task Scheduling feature, which simplifies managing cron jobs without needing to manually add commands to the system's crontab.
+
+
+* In terminal, we need to run the following command to create a cron job and this command will create a file under commands.In that file, we can write our bussiness logics
+in handle function.
+
+Command to create cron :
+------------------------
+
+" php artisan make:command YourCronName"
+
+In YourCronName.php :
+--------------------
+
+<?php
+
+namespace App\Console\Commands;
+
+use Illuminate\Console\Command;
+
+
+class YourCronName extends Command
+{
+    /**
+     * The name and signature of the console command.
+     *
+     * @var string
+     */
+    protected $signature = 'app:your-cron-name';  --> ("COMMAND NAME")
+
+    /**
+     * The console command description.
+     *
+     * @var string
+     */
+    protected $description = 'Command description'; 
+
+    /**
+     * Execute the console command.
+     */
+    public function handle()  --> ("This function will be used to the handle our bussiness logic")
+    {
+       // Bussiness Logic
+    }
+}
+
+=> In signature,we can mention command name that will be used in kernel.php
+=> In description,we can mention command descripiton
+=> In handle function,we can code our bussiness logic.
+
+
+In Console/Kernel.php:
+---------------------
+
+<?php
+
+
+namespace App\Console;
+
+
+use App\Models\BusinessSetting;
+use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
+
+
+class Kernel extends ConsoleKernel
+{
+    /**
+     * The Artisan commands provided by your application.
+     *
+     * @var array
+     */
+    protected $commands = [
+        \App\Console\Commands\CreateDailySubscriptionOrders::class,
+        \App\Console\Commands\RestaurantDisbursementScheduler::class,
+        \App\Console\Commands\DeliveryManDisbursementScheduler::class,
+ 
+    ];
+
+
+    /**
+     * Define the application's command schedule.
+     *
+     * @param  \Illuminate\Console\Scheduling\Schedule  $schedule
+     * @return void
+     */
+    protected function schedule(Schedule $schedule)
+    {
+        $schedule->command('app:create-daily-subscription-orders')->dailyAt('00:00');
+        $schedule->command('app:create-daily-subscription-orders')->everyMinute()->withoutOverlapping();
+        $schedule->command('restaurant:disbursement')->dailyAt('00:00');
+        $schedule->command('dm:disbursement')->dailyAt('00:00');
+    }
+   
+
+
+    /**
+     * Register the commands for the application.
+     *
+     * @return void
+     */
+    protected function commands()
+    {
+        $this->load(DIR.'/Commands');
+
+
+        require base_path('routes/console.php');
+    }
+}
+
+=> In commands array,we need to declare our created cron files that present in console/commands.
+=> In schedule function,we can schedule our commands based on the requirement like we can schedule the time for running that command.
+
+
+=> After these steps, we need to configure the cron command in our server
+
+"php artisan schedule:run" -> this command will iniate the cron commands that we schedule in that schedule function.
+
+
+"* * * * * php /path-to-your-project/artisan schedule:run >> /dev/null 2>&1 "
+
+In (* * * *),we can mention time.
+
+First field: Minute (0–59)
+Second field: Hour (0–23)
+Third field: Day of the month (1–31)
+Fourth field: Month (1–12)
+Fifth field: Day of the week (0–7, where both 0 and 7 represent Sunday)
+
+
+
+
+
