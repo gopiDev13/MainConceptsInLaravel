@@ -1,0 +1,325 @@
+RazorPayImplementationInLaravel:
+-------------------------------
+
+" composer require razorpay/razorpay "
+
+=> Run this command to install razorpay sdk in your project.
+
+In your controller, you need to create razorpay order before checkout page.
+
+
+Order Creation Logic for Razor-Pay:
+----------------------------------
+
+Eg: 
+
+use Razorpay\Api\Api;
+
+public function showCheckout(Request $request) {
+
+        // Initialize Razorpay API
+        $api = new Api(config('services.razorpay.key'), config('services.razorpay.secret'));
+
+        $orderData = [
+            'receipt'         => 'order_' . "Your unique id",
+            'amount'          => $package->price * 100, // Convert to paise
+            'currency'        => 'INR',
+            'payment_capture' => 1
+        ];
+
+        // Create Razorpay Order
+        $razorpayOrder = $api->order->create($orderData);
+
+        return view('razorpay-checkout', [
+            'post' => $post,
+            'package' => $package,
+            'order' => $razorpayOrder,
+            'razorpayKey' => config('services.razorpay.key'),
+            'og' => new OpenGraph(),
+            'method' => $method
+
+        ]);
+
+}
+
+
+
+Checkout page.
+-------------
+
+<!-- resources/views/checkout.blade.php -->
+@extends('layouts.master')
+
+@section('content')
+<div class="checkout-wrapper vh-100 d-flex align-items-center justify-content-center my-4">
+    <div class="container">
+        <div class="row justify-content-center vh-100">
+            <div class="col-xl-12 p-3 py-lg-4 ">
+                <div class="d-flex flex-column flex-lg-row shadow-lg rounded overflow-hidden">
+                    <!-- Left Section - Primary Background -->
+                    <div class="col-lg-6 d-flex align-items-center justify-content-center bg-primary text-white p-5">
+                        <div>
+                            <h3 class="fw-bold text-center">Welcome</h3>
+                            <p class="text-center">Secure and fast payment process</p>
+                        </div>
+                    </div>
+                    <!-- Right Section - White Background -->
+                    <div class="col-lg-6 bg-white p-5">
+                        <div class="text-center  p-5">
+                            <h5 class="fw-bold p-5">
+                                <img src="{{ imgUrl(config('settings.app.logo'), 'logo') }}"
+                                alt="{{ strtolower(config('settings.app.app_name')) }}" class="tooltipHere main-logo" title="" data-placement="bottom"
+                                data-toggle="tooltip"
+                                data-original-title="{!! isset($logoLabel) ? $logoLabel : '' !!}"/>
+                            </h5>
+                        </div>
+                        <div class="container">
+                            <h2>Complete Payment for "Your Product name"</h2>
+                            <h3>Amount: ₹ "Amount for the product"</h3>
+                        
+                            <!-- Add this button to initiate payment -->
+                            <div class="d-flex justify-content-center align-items-center">
+                                <button id="rzp-button" class="btn btn-primary btn-lg text-center">Pay Now</button>
+                            </div>
+                           
+                        </div>
+                        
+                        <!-- Your form or content goes here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+
+<script>
+    var options = {
+        "key": "{{ $razorpayKey }}",
+        "amount": "{{ $order->amount }}", 
+        "currency": "{{ $order->currency }}",
+        "order_id": "{{ $order->id }}",
+        "name": "Your Company Name",
+        "description": "Payment for Post #{{ $product->id }}",
+        "handler": function (response) {
+            // Handle payment success
+            handlePayment(response);
+        },
+        "theme": {
+                "color": "#007bff" // Razorpay theme color (Blue)
+            },
+        "modal": {
+            "ondismiss": function() {
+                document.getElementById('rzp-button').disabled = false;
+            }
+    }
+    };
+    function handlePayment(response) {
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = "{{ route('payment.handler') }}";
+            
+            const token = document.createElement('input');
+            token.type = 'hidden';
+            token.name = '_token';
+            token.value = "{{ csrf_token() }}";
+            form.appendChild(token);
+
+            const postId = document.createElement('input');
+            postId.type = 'hidden';
+            postId.name = 'product_id';
+            postId.value = "{{ $product->id }}";
+            form.appendChild(postId);
+
+            for (const key in response) {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = key;
+                input.value = response[key];
+                form.appendChild(input);
+            }
+
+
+            document.body.appendChild(form);
+            form.submit();
+        }
+    var rzp = new Razorpay(options);
+    
+     document.getElementById('rzp-button').onclick = function(e){
+         console.log('Button clicked');
+         this.disabled = true;
+         rzp.open();
+         e.preventDefault();
+     }
+
+
+</script>
+@endsection
+
+Payment Verification Logic in our controller.
+--------------------------------------------
+
+    public function handlePayment(Request $request)
+    {
+        $api = new Api(config('services.razorpay.key'), config('services.razorpay.secret'));
+
+        try {
+            // Verify Razorpay signature
+            $api->utility->verifyPaymentSignature([
+                'razorpay_signature'  => $request->razorpay_signature,
+                'razorpay_payment_id' => $request->razorpay_payment_id,
+                'razorpay_order_id'   => $request->razorpay_order_id
+            ]);
+            // Retrieve post & package from session
+            $postId = $request->product_id;
+
+            // Save Payment Record
+            Payment::create([
+                'post_id' => $postId,
+                'transaction_id' => $request->razorpay_payment_id,
+                'amount' => $request->amount / 100, // Convert back to INR
+            ]);
+	    return redirect()->route('payment-success');
+        } catch (\Exception $e) {
+            return view('errors.400')->with('error', 'Session expired. Please try again.');
+        }
+    }
+
+Using Webhook concept :
+-----------------------
+
+=> The reason we are using webhooks whether if any errors occurs in user side during payment processing.
+The payment gateway will call the webhook url we entered in the payment integration domain.
+
+Definition:
+----------
+
+Webhooks are essential for reliable payment processing because they provide real-time updates about the status of the payment itself, 
+regardless of where the initial error (if any) occurred. They are not a replacement for client-side error handling,
+but they are crucial for server-side processing and reconciliation.
+They are especially important for handling errors that happen within the payment gateway's systems.
+
+Steps:
+------
+
+=> Go to the Razor-pay dashboard and navigate to the settings-> webhooks.
+=> Create a new webhook url with your endpoint url where razorpay will send payment status.
+
+eg:
+---
+
+"https://yourwebsite.com/payment/webhook"
+
+=> Select the relevant events (like payment.captured, payment.failed, etc.) for which you want to be notified.
+
+=> In your web.php,create a route according to the webhook endpoint url.
+
+eg:
+---
+
+"https://gstours.com/payment/webhook"
+
+Route::post('/payment/webhook' , [RazorpayController::class , 'handleWebHook'])->name('handle.webhook');
+
+=> In RazorPayController.php, create a function to handleWebhook (eg:handleWebHook). Inside that function we need to handle webhook and our bussiness logic.
+
+eg:
+---
+
+public function handleWebhook(Request $request)
+{
+    // Retrieve the raw request body
+    $input = @file_get_contents("php://input");
+
+    // Verify Razorpay signature (optional but recommended for security)
+    $signature = $request->get('razorpay_signature');
+    $paymentId = $request->get('razorpay_payment_id');
+    $orderId = $request->get('razorpay_order_id');
+
+    $api = new Api(config('services.razorpay.key'), config('services.razorpay.secret'));
+
+    try {
+        // Verify the payment signature sent by Razorpay
+        $api->utility->verifyPaymentSignature([
+            'razorpay_signature' => $signature,
+            'razorpay_payment_id' => $paymentId,
+            'razorpay_order_id'   => $orderId,
+        ]);
+
+        // Handle the payment status
+        $payment = $api->payment->fetch($paymentId);
+
+        // If payment is successful, update your records
+        if ($payment->status == 'captured') {
+            $paymentRecord = Payment::where('transaction_id', $paymentId)->first();
+            if (!$paymentRecord) {
+                Payment::create([
+                    'post_id' => $payment->notes->post_id,
+                    'package_id' => $payment->notes->package_id,
+                    'transaction_id' => $paymentId,
+                    'amount' => $payment->amount / 100, // Convert back to INR
+                ]);
+
+               ....Your Bussiness Logic here .....
+            }
+        }
+
+        return response()->json(['status' => 'success']);
+    } catch (\Exception $e) {
+        // Handle the error (e.g., log it)
+        return response()->json(['status' => 'failure', 'message' => $e->getMessage()]);
+    }
+}
+
+To test Razorpay webhooks locally in your Laravel application, you'll need to simulate receiving a webhook from Razorpay, as Razorpay cannot send webhooks to your local server by default (because it's not publicly accessible). You can achieve this by using tools that allow you to expose your local environment to the internet.
+
+Here's how you can test it step by step:
+
+=> Expose Your Local Server Using Ngrok
+Ngrok is a tool that can expose your local server to the internet by creating a public URL. This is the simplest way to test webhooks on a local server.
+
+Steps to Use Ngrok:
+-------------------
+
+Download and Install Ngrok:
+--------------------------
+
+=> Go to Ngrok's website and download the appropriate version for your system.
+=> After installation, you can start Ngrok from the terminal.
+=> Expose Your Laravel Local Server: Assuming your Laravel application is running on http://localhost:8000, you can run the following command in your terminal:
+
+Command:
+--------
+
+"ngrok http 8000 "
+
+=> Get the Public URL: After running the above command, Ngrok will provide a public URL (e.g., http://12345.ngrok.io). This URL will forward requests to your local server.
+
+=> Set Up Razorpay Webhook: Go to the Razorpay Dashboard and configure your webhook to point to this Ngrok URL:
+
+For example, set the webhook URL to http://12345.ngrok.io/payment/webhook.
+
+Check Webhook Events:
+---------------------
+
+In the Razorpay Dashboard, you can configure the webhook to trigger events such as payment.captured, payment.failed, etc.
+
+Whenever an event happens, Razorpay will send a request to your local server’s webhook endpoint (/payment/webhook).
+
+Make sure your handleWebhook method in RazorPayController is properly set up to handle the incoming webhook.
+
+Simulate Webhook Events in Razorpay Dashboard:
+----------------------------------------------
+
+=> To test the webhook manually without waiting for actual payments, you can trigger events from the Razorpay dashboard:
+
+=> Go to Settings > Webhooks in the Razorpay Dashboard.
+
+=> Find the webhook you configured for your local server.
+
+=> There should be an option to "Send Test Event" for different webhook events (e.g., payment.captured, payment.failed, etc.).
+
+=> Click on "Send Test Event" and select an event (like payment.captured).
+
+=> Razorpay will send the test event to your Ngrok URL, which will trigger the webhook in your local Laravel app.
